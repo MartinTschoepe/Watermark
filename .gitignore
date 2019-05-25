@@ -2,4 +2,4 @@
 *.png
 *.JPG
 *.rar
-./proSR/*
+./__pycache__/*
