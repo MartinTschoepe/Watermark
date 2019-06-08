@@ -7,50 +7,34 @@ import scipy.ndimage
 import scipy.signal
 import random
 
-def get_conture_mask(mask_array, top_left):
-    dx = 1
-    mask_array2 = np.diff(mask_array, axis = 0)/dx #derivate in 511-direction
-    mask_array3 = np.diff(mask_array, axis = 1)/dx #derivate in 768-direction
-    filler_array2 = np.zeros(mask_array2[1:2,:,:].shape) #vector of shape (1, 768, 3)
-    filler_array3 = np.zeros(mask_array3[:,1:2,:].shape) #vec of shape (511, 1, 3)
-    if top_left:
-        mask_array2 = np.concatenate((abs(mask_array2), filler_array2))
-        mask_array3 = np.concatenate((abs(mask_array3), filler_array3), axis = 1)
-    else:
-        mask_array2 = np.concatenate( (filler_array2, abs(mask_array2)) )
-        mask_array3 = np.concatenate( (filler_array3, abs(mask_array3)), axis = 1 )
-    mask = mask_array2 + mask_array3 #add horizonal and vertical derivatives
-    return np.where(mask < 1, mask, 1) 
-
-def enlarge_mask(array, iter):
-    for i in range(iter):
-        larger_mask1 = get_conture_mask(array, True)
-        larger_mask2 = get_conture_mask(larger_mask1, False)
-        array = larger_mask1 + larger_mask2 + array 
-        array = np.where(array < 1, array, 1) 
-    return array
-
-def colorwise_gauß_filer(full_array, sig):
-    new_array = np.zeros((full_array.shape))
-    new_array[:,:,0] = gaussian_filter(full_array[:,:,0], sigma = sig)
-    new_array[:,:,1] = gaussian_filter(full_array[:,:,1], sigma = sig)
-    new_array[:,:,2] = gaussian_filter(full_array[:,:,2], sigma = sig)
-    return new_array
-
-def blurring(content, mask, sig):
-    content_blurry = colorwise_gauß_filer(content, sig)
-    new_content = content_blurry*mask + content*(1-mask) 
-    return new_content
-
 def matrix_substraction(content, mask, alpha, save):
-    interim = content -  mask * (255 - content) * alpha
-    if save:
-    	interim_min = np.amin(interim, axis = 2)
-    	stacked_interim_min = np.stack((interim_min, interim_min, interim_min), axis = 2)
-    	new_content = np.where(stacked_interim_min > 0, interim, content) 
-    	return new_content
-    else:
-    	return interim
+    untouched_content = content * (1 - mask)
+    watermarked_content = mask * (content - 120)
+    print("watermarked_content < 0: " + str(np.sum(watermarked_content < 0) ) )
+    watermarked_content = np.where(watermarked_content > 0, watermarked_content, 0)
+
+    scaled_wtm_content = watermarked_content * alpha
+    print("scaled_wtm_content > 255: " + str(np.sum(scaled_wtm_content > 255) ) )
+    scaled_wtm_content = np.where(scaled_wtm_content < 255, scaled_wtm_content , 255)
+
+    interim_content = untouched_content + scaled_wtm_content
+    print("interim_content > 255: " + str(np.sum(interim_content > 255) ) )
+    interim_content= np.where(interim_content < 255, interim_content, 255)
+    #print("untouched_content: ")
+    #Wmisc.print_statistics(untouched_content)
+    #print("watermarked_content: ")
+    #Wmisc.print_statistics(watermarked_content)
+    #print("scaled_wtm_content: ")
+    #Wmisc.print_statistics(scaled_wtm_content)
+    #print("interim_content: ")
+    #Wmisc.print_statistics(interim_content)
+    #if save:
+    #    interim_min = np.amin(interim_content, axis = 2)
+    #    stacked_interim_min = np.stack((interim_min, interim_min, interim_min), axis = 2)
+    #    new_content = np.where(stacked_interim_min > 0, interim_content, content) 
+    #    return new_content
+    #else:
+    return interim_content
 
 def get_matrix_argument(array, lx, ly):
     if np.any( array > 0 ):
@@ -86,6 +70,8 @@ def array_averaging(array):
             ry = 1
         get_matrix_argument(array[idx-lx:idx+rx+1, idy-ly:idy+ry+1, idz], lx, ly)
 
+    #TODO: This creats colorful artefacts, due to the averageing in colors.
+    #Problem: The average can be a color that never appeared in the previouse picture.
 def smooth_thin_conture(content, wide_conture, thin_conture):
     two_layer_conture = wide_conture - thin_conture
     Wmisc.plot_array_as_file( two_layer_conture * 255, "two_layer_conture.png")
@@ -96,19 +82,21 @@ def smooth_thin_conture(content, wide_conture, thin_conture):
         array_averaging(two_layer_content)
 
     new_content = content * (1 - wide_conture) + two_layer_content
+    Wmisc.print_statistics(new_content)
     return new_content
 
 def apply_to_pic(content_array, mask, conture2, conture3, conture4, directory, pic_name):
-    q = 2.2
-    con_wo_mask = content_array -  mask * (255 - content_array) * (1 - content_array/255) * q
-    con_wo_mask = np.where(con_wo_mask > 0, con_wo_mask, 0) 
-    new_content = smooth_thin_conture(con_wo_mask, conture4, conture3)
-    content_final1 = blurring(new_content, conture2, 1.5 )
-    content_final1 = blurring(content_final1, conture3, 1.5 )
-    content_final1 = blurring(content_final1, conture4, 1.5 )
-    content_final1 = blurring(content_final1, mask, 2.0 )
-    Wmisc.plot_array_as_file(content_final1, str(directory) + "2/" + str(pic_name) )
-    #Wmisc.plot_array_as_file(con_wo_mask, str(directory) + "2/" + str(pic_name) )
+    con_wo_mask = matrix_substraction(content_array, mask, 2.0, True)
+    #con_wo_mask = np.where(con_wo_mask[:,:,] > 0, con_wo_mask, 0) 
+    #new_content = smooth_thin_conture(con_wo_mask, conture4, conture3)
+    #content_final1 = Wmisc.blurring(new_content, conture2, 2.0 )
+    #content_final1 = Wmisc.blurring(content_final1, conture3, 2.0 )
+    #content_final1 = Wmisc.blurring(content_final1, conture4, 2.0 )
+    #content_final1 = Wmisc.blurring(content_final1, mask, 2.0 )
+
+    #Wmisc.plot_array_as_file(content_final1, str(directory) + "2/" + str(pic_name) )
+    #Wmisc.plot_array_as_file(new_content, str(directory) + "2/" + str(pic_name) )
+    Wmisc.plot_array_as_file(con_wo_mask, str(directory) + "2/" + str(pic_name) )
 
 def apply_to_folder(directory, mask, conture2, conture3, conture4):
     for filename in os.listdir(directory):
@@ -123,18 +111,18 @@ def main():
     dir2 = "Mario_sr"
     path2 = "mask.png"
 
-    #content_array = np.array(Image.open(path1), dtype = np.int32)
     mask_array = np.array(Image.open(path2), dtype = np.int32)[:,:,0:3]/255
     mask_array = np.where(mask_array < 1, mask_array, 1)
 
-    interim_conture = get_conture_mask(mask_array, True)
-    conture_mask = enlarge_mask( interim_conture, 1 ) - interim_conture
-    conture_mask2 = enlarge_mask(conture_mask, 3) * mask_array
-    conture_mask3 = enlarge_mask(conture_mask2, 3)
-    conture_mask4 = enlarge_mask(conture_mask3, 3)
+    interim_conture = Wmisc.get_conture_mask(mask_array, True)
+    conture_mask = Wmisc.enlarge_mask( interim_conture, 1 ) - interim_conture
+    conture_mask2 = Wmisc.enlarge_mask(conture_mask, 3) * mask_array
+    conture_mask3 = Wmisc.enlarge_mask(conture_mask2, 3)
+    conture_mask4 = Wmisc.enlarge_mask(conture_mask3, 3)
 
     mask_array -= interim_conture
-    mask_array = blurring(mask_array, 1, 1.0)
+    mask_array = np.where(mask_array > 0, mask_array, 0)
+    #mask_array = Wmisc.blurring(mask_array, 1, 1.0)
 
     apply_to_folder(dir1, mask_array, conture_mask2, conture_mask3, conture_mask4)
     apply_to_folder(dir2, mask_array, conture_mask2, conture_mask3, conture_mask4)
